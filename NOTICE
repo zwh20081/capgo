@@ -1,0 +1,19 @@
+capgo
+Copyright 2026 zwh20081
+
+This product is a Go implementation of the server side of Cap
+(https://capjs.js.org), by Tiago (https://github.com/tiagozip/cap),
+licensed under the Apache License, Version 2.0.
+
+Protocol behaviour, constants, key derivation labels, wire formats and the
+instrumentation client script are ported from:
+
+  - @cap.js/server 4.0.5  (stateful format-1 challenges and tokens)
+  - capjs-core 0.1.1/0.1.2 (signed format-1 and format-2 challenges,
+    scopes, nonce consumption, RSW time-lock minting, instrumentation)
+
+The legacy format-1 verification loop was originally derived from
+github.com/ackcoder/go-cap v1.1.4 (Apache-2.0) via the CapAPI project.
+
+Test fixtures under testdata/ were produced by running the official
+JavaScript packages listed above.

@@ -1,0 +1,11 @@
+{
+  "name": "capgo-interop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "capjs-core": "0.1.1"
+  }
+}
