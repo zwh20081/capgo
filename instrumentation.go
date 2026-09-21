@@ -3,6 +3,7 @@ package capgo
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -23,15 +24,20 @@ type InstrumentationOptions struct {
 	// BlockAutomatedBrowsers adds headless/webdriver detection. When a client
 	// reports "blocked", redemption fails with ReasonInstrAutomated.
 	BlockAutomatedBrowsers bool
-	// ObfuscationLevel is 1..10 (default 3). Levels 1-3 only strip
-	// whitespace. Levels 4+ additionally move every string literal into a
-	// shuffled lookup table (capjs-core's fallback path when
-	// javascript-obfuscator/esbuild are not installed).
+	// ObfuscationLevel is 1..10 (default 3). The built-in Go generator strips
+	// whitespace at levels 1-3 and adds a shuffled string table at levels 4+.
+	// Custom generators may implement stronger transforms; package capjs
+	// provides the official obfuscation profile with its optional dependencies.
 	ObfuscationLevel int
 	// TTL bounds how long the instrumentation result is accepted. Zero means
 	// "same as the challenge TTL".
 	TTL time.Duration
 }
+
+// InstrumentationGenerator creates a client script and its private verification
+// metadata. Implementations must be safe for concurrent calls and honor ctx.
+// random and now are the Cap instance's configured entropy source and clock.
+type InstrumentationGenerator func(ctx context.Context, random io.Reader, opts InstrumentationOptions, now time.Time) (*Instrumentation, error)
 
 // InstrumentationMeta is the secret the server keeps (encrypted inside the
 // challenge token) in order to verify a client's instrumentation result. The

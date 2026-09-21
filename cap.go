@@ -97,6 +97,9 @@ type Options struct {
 	// the blob rides in the "instrumentation" field; for format 2 it becomes
 	// a challenge entry.
 	Instrumentation *InstrumentationOptions
+	// InstrumentationGenerator replaces the built-in generator when instrumentation
+	// is enabled. A nil value uses the Go implementation.
+	InstrumentationGenerator InstrumentationGenerator
 
 	// SignToken, when set, replaces the random stored verification token
 	// with a caller-defined one (capjs-core's signToken). Validate then
@@ -235,6 +238,8 @@ type ChallengeOptions struct {
 	// Set DisableInstrumentation to force it off.
 	Instrumentation        *InstrumentationOptions
 	DisableInstrumentation bool
+	// InstrumentationGenerator overrides the instance's generator for this call.
+	InstrumentationGenerator InstrumentationGenerator
 }
 
 // Challenge is a generated challenge. Marshal it to JSON and return it from
@@ -508,7 +513,7 @@ func (c *Cap) challengeTTL(o ChallengeOptions) time.Duration {
 	return c.opts.ChallengeTTL
 }
 
-func (c *Cap) generateInstrumentation(o ChallengeOptions, ttl time.Duration, now time.Time) (*Instrumentation, error) {
+func (c *Cap) generateInstrumentation(ctx context.Context, o ChallengeOptions, ttl time.Duration, now time.Time) (*Instrumentation, error) {
 	io := c.instrumentationOptions(o)
 	if io == nil {
 		return nil, nil
@@ -517,7 +522,51 @@ func (c *Cap) generateInstrumentation(o ChallengeOptions, ttl time.Duration, now
 	if opts.TTL <= 0 {
 		opts.TTL = ttl
 	}
-	return GenerateInstrumentation(c.opts.Random, opts, now)
+	return c.runInstrumentationGenerator(ctx, o, opts, now)
+}
+
+func (c *Cap) runInstrumentationGenerator(ctx context.Context, o ChallengeOptions, opts InstrumentationOptions, now time.Time) (*Instrumentation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	generator := o.InstrumentationGenerator
+	if generator == nil {
+		generator = c.opts.InstrumentationGenerator
+	}
+	var instr *Instrumentation
+	var err error
+	if generator == nil {
+		instr, err = GenerateInstrumentation(c.opts.Random, opts, now)
+	} else {
+		instr, err = generator(ctx, c.opts.Random, opts, now)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if instr == nil || instr.Blob == "" || instr.Meta.ID == "" || len(instr.Meta.Vars) == 0 || len(instr.Meta.Vars) != len(instr.Meta.ExpectedVals) {
+		return nil, fmt.Errorf("%w: instrumentation generator returned invalid output", ErrConfig)
+	}
+	seen := make(map[string]bool, len(instr.Meta.Vars))
+	for _, name := range instr.Meta.Vars {
+		if name == "" || seen[name] {
+			return nil, fmt.Errorf("%w: instrumentation generator returned invalid variables", ErrConfig)
+		}
+		seen[name] = true
+	}
+	if instr.Meta.BlockAutomatedBrowsers != opts.BlockAutomatedBrowsers {
+		return nil, fmt.Errorf("%w: instrumentation generator changed browser blocking policy", ErrConfig)
+	}
+	// Keep stored metadata independent of a generator's reusable result.
+	result := *instr
+	result.Meta.Vars = append([]string(nil), instr.Meta.Vars...)
+	result.Meta.ExpectedVals = append([]int32(nil), instr.Meta.ExpectedVals...)
+	if result.Meta.Expires == 0 {
+		result.Meta.Expires = now.Add(opts.TTL).UnixMilli()
+	}
+	return &result, nil
 }
 
 func (c *Cap) challengeStored(ctx context.Context, o ChallengeOptions) (*Challenge, error) {
@@ -533,7 +582,7 @@ func (c *Cap) challengeStored(ctx context.Context, o ChallengeOptions) (*Challen
 		return nil, err
 	}
 	record := ChallengeRecord{Count: count, Size: size, Difficulty: difficulty, Scope: o.Scope, Expires: expires}
-	instr, err := c.generateInstrumentation(o, ttl, now)
+	instr, err := c.generateInstrumentation(ctx, o, ttl, now)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +600,7 @@ func (c *Cap) challengeStored(ctx context.Context, o ChallengeOptions) (*Challen
 	return ch, nil
 }
 
-func (c *Cap) challengeSigned(_ context.Context, o ChallengeOptions) (*Challenge, error) {
+func (c *Cap) challengeSigned(ctx context.Context, o ChallengeOptions) (*Challenge, error) {
 	if len(c.opts.Secret) == 0 {
 		return nil, fmt.Errorf("%w: Secret is required for stateless challenges", ErrConfig)
 	}
@@ -568,7 +617,7 @@ func (c *Cap) challengeSigned(_ context.Context, o ChallengeOptions) (*Challenge
 		return nil, err
 	}
 	claims := tokenClaims{N: nonce, C: count, S: size, D: difficulty, Exp: expires, Iat: nowMs, Sk: o.Scope, X: o.Extra}
-	instr, err := c.generateInstrumentation(o, ttl, now)
+	instr, err := c.generateInstrumentation(ctx, o, ttl, now)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +643,7 @@ func (c *Cap) challengeSigned(_ context.Context, o ChallengeOptions) (*Challenge
 	return ch, nil
 }
 
-func (c *Cap) challengeV2(_ context.Context, o ChallengeOptions) (*Challenge, error) {
+func (c *Cap) challengeV2(ctx context.Context, o ChallengeOptions) (*Challenge, error) {
 	if len(c.opts.Secret) == 0 {
 		return nil, fmt.Errorf("%w: Secret is required for format-2 challenges", ErrConfig)
 	}
@@ -650,7 +699,7 @@ func (c *Cap) challengeV2(_ context.Context, o ChallengeOptions) (*Challenge, er
 			if opts.TTL <= 0 {
 				opts.TTL = ttl
 			}
-			instr, err := GenerateInstrumentation(c.opts.Random, opts, now)
+			instr, err := c.runInstrumentationGenerator(ctx, o, opts, now)
 			if err != nil {
 				return nil, err
 			}

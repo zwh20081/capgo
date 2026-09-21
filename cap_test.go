@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -345,11 +346,14 @@ func TestStatelessFormat1RoundTripAndReplay(t *testing.T) {
 	if _, err := c.Redeem(context.Background(), RedeemRequest{Token: ch.Token, Solutions: solutions}, RedeemOptions{Scope: "signup"}); !errors.Is(err, ErrAlreadyRedeemed) {
 		t.Fatalf("replay error = %v", err)
 	}
-	// Tampered signature.
-	tampered := ch.Token[:len(ch.Token)-1] + "A"
-	if tampered == ch.Token {
-		tampered = ch.Token[:len(ch.Token)-1] + "B"
+	// Flip a signature byte, not the base64 tail's unused padding bits.
+	signatureStart := strings.LastIndexByte(ch.Token, '.') + 1
+	signature, err := base64.RawURLEncoding.DecodeString(ch.Token[signatureStart:])
+	if err != nil {
+		t.Fatal(err)
 	}
+	signature[0] ^= 1
+	tampered := ch.Token[:signatureStart] + base64.RawURLEncoding.EncodeToString(signature)
 	if _, err := c.Redeem(context.Background(), RedeemRequest{Token: tampered, Solutions: solutions}, RedeemOptions{}); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("tamper error = %v", err)
 	}

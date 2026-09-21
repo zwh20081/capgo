@@ -3,9 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "verify": "node verify.mjs"
+    "verify": "node verify.mjs",
+    "test": "go test -tags=integration -count=1 -timeout=10m ../../capjs ../../internal/integration"
   },
   "dependencies": {
-    "capjs-core": "0.1.1"
+    "capjs-core": "0.1.2"
+  },
+  "devDependencies": {
+    "@cap.js/widget": "0.1.57",
+    "@cap.js/wasm": "0.0.7",
+    "playwright": "1.63.0"
   }
 }
